@@ -1,0 +1,114 @@
+x-common-env: &common-env
+  KAFKA_CONTROLLER_LISTENER_NAMES: 'CONTROLLER'
+  KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: 'CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT'
+  KAFKA_BROKER_INTERNAL_LISTENER_NAMES: INTERNAL
+  KAFKA_CONTROLLER_QUORUM_VOTERS: '1@broker1:29092, 2@broker2:29093'
+  KAFKA_PROCESS_ROLES: 'broker,controller'
+  KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+  KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 2
+  KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 2
+  CLUSTER_ID: ${CLUSTER_ID:-$(cat /shared/env/cluster_id)}
+  KAFKA_LOG_DIRS: '/tmp/kraft-combined-logs'
+  KAFKA_METRIC_REPORTERS: io.confluent.metrics.reporter.ConfluentMetricsReporter
+  KAFKA_METRIC_REPORTER_TOPIC_REPLICAS: 1
+  CONFLUENT_METRICS_ENABLE: 'true'
+  CONFLUENT_SUPPORT_CUSTOMER_ID: anonymous
+
+x-common-healthcheck: &common-healthcheck
+  interval: 10s
+  timeout: 5s
+  retries: 5
+
+services:
+  cluster-setup: 
+    image: confluentinc/cp-kafka
+    volumes:
+      - ./data/kafka-data:/var/kafka/data
+      - ./env:/shared/env
+    command: 
+      - sh 
+      - -c 
+      - |
+        if [ ! -f /shared/env/cluster_id ]; then 
+          echo $$(kafka-storage random-uuid) > /shared/env/cluster_id  
+          kafka-storage --format --ignore-formatted --cluster-id $$cluster_id -c /etc/kafka/kafka.properties
+        fi
+    networks:
+      - datalab
+  broker1: 
+    image: confluentinc/cp-server
+    container_name: broker1
+    hostname: broker1
+    ports:
+      - "9092:9092"
+    volumes:
+      - ./data/broker2:/var/lib/kafka/data
+      - ./env:/shared/env
+    environment:
+      <<: *common-env
+      KAFKA_NODE_ID: 1
+      KAFKA_LISTENERS: "INTERNAL://broker1:29092, CONTROLLER://broker1:29092, EXTERNAL://broker1:localhost:29092"
+      KAFKA_ADVERTISED_LISTENERS: "INTERNAL://broker1:29092,  EXTERNAL://broker1:localhost:29092"
+      KAFKA_CONFLUENT_METRICS_REPORTER_BOOTSTRAP_SERVERS: broker1:29092
+    healthcheck:
+      <<: *common-healthcheck
+      test: ["CMD", "bash", "-c", "nc -z localhost 9092 || exit 1"]
+    depends_on:
+      - cluster-setup
+    networks:
+      - datalab
+      
+
+  broker2: 
+    image: confluentinc/cp-server
+    container_name: broker2
+    hostname: broker2
+    ports:
+      - "9093:9093"
+    volumes:
+      - ./data/broker2:/var/lib/kafka/data
+      - ./env:/shared/env
+    environment:
+      <<: *common-env
+      KAFKA_NODE_ID: 2
+      KAFKA_LISTENERS: "INTERNAL://broker2:29092, CONTROLLER://broker2:29093, EXTERNAL://broker2:localhost:29093"
+      KAFKA_ADVERTISED_LISTENERS: "INTERNAL://broker2:29092,  EXTERNAL://broker2:localhost:29093"
+      KAFKA_CONFLUENT_METRICS_REPORTER_BOOTSTRAP_SERVERS: broker1:29093
+    healthcheck:
+      <<: *common-healthcheck
+      test: ["CMD", "bash", "-c", "nc -z localhost 9093 || exit 1"]
+    depends_on:
+      - cluster-setup
+    networks:
+      - datalab
+
+  control-center:
+    image: confluentinc/cp-enterprise-control-center
+    container_name: control-center
+    hostname: control-center
+    # depends_on:
+    #   broker:
+    #     condition: service_healthy
+    #   schema-registry:
+    #     condition: service_healthy
+    environment:
+      CONTROL_CENTER_BOOTSTRAP_SERVERS: 'broker1:29092, broker2:29093'
+      # CONTROL_CENTER_SCHEMA_REGISTRY_URL: "http://schema-registry:8081"
+      CONTROL_CENTER_REPLICATION_FACTOR: 1
+      CONTROL_CENTER_INTERNAL_TOPICS_PARTITIONS: 1
+      CONTROL_CENTER_MONITORING_INTERCEPTOR_TOPIC_PARTITIONS: 1
+      CONFLUENT_METRICS_TOPIC_REPLICATION: 1
+      CONFLUENT_METRICS_ENABLE: 'false'
+      PORT: 9021
+    ports:
+      - 9021:9021
+    networks:
+      - datalab
+    healthcheck:
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      test: ["CMD", "curl", "-f", "http://localhost:9021/health"]
+networks:
+  datalab:
+  
