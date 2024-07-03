@@ -112,7 +112,7 @@ services:
       /bin/bash -c "
       sleep 5;   
       /usr/bin/mc config --quiet host add dlminio http://minio:9000 ${MINIO_USERNAME} ${MINIO-PASSWORD}; 
-      /usr/bin/mc mb --quiet minio/bronze; 
+      /usr/bin/mc mb --quiet minio/transportation; 
       /usr/bin/mc admin service restart dlminio;
       "
     depends_on:
@@ -120,7 +120,32 @@ services:
     networks:
       - datalab
 
-      
+  spark-master: 
+    image: bitnami/spark:latest
+    command: bin/spark-class org.apache.spark.deploy.master.Master
+    volumes:
+      - ./jobs:/opt/bitami/spark/jobs
+    ports:
+      - "9090:8080"
+      - "7077:7077"
+    networks:
+      - datalab
+  
+  spark-worker: 
+    image: bitnami/spark:latest
+    command: bin/spark-class org.apache.spark.deploy.worker.Worker spark://spark-master:7077
+    depends_on:
+      - spark-master
+    volumes:
+      - ./jobs:/opt/bitami/spark/jobs
+    environment:
+      SPARK_MODE: worker
+      SPARK_WORKER_CORES: 2
+      SPARK_WORKER_MEMORY: 1g
+      SPARK_MASTER_URL: spark://spark-master:7077
+    networks:
+      - datalab
+
 
 networks:
   datalab:
