@@ -1,3 +1,8 @@
+# files and folders to ignore
 .env
-/config
+/configure
 /py_venv
+.main.py
+/src
+/test
+/jobs
